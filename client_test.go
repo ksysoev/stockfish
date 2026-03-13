@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -487,4 +488,104 @@ func TestClient_ExportNet_SearchInProgress(t *testing.T) {
 
 	err := c.ExportNet("", "")
 	assert.ErrorIs(t, err, ErrSearchInProgress)
+}
+
+// TestClient_Go_SlowConsumer verifies that cancelling the context while the
+// caller is not reading from the result channel does not deadlock runSearch.
+// After cancellation the search must become inactive so the client can accept
+// new commands.
+func TestClient_Go_SlowConsumer(t *testing.T) {
+	// Many info lines followed by bestmove — more than the channel buffer (32).
+	lines := make([]string, 0, 40)
+	for i := 1; i <= 38; i++ {
+		lines = append(lines, "info depth 1 seldepth 1 multipv 1 score cp 17 nodes 20 nps 20000 hashfull 0 tbhits 0 time 1 pv e2e4")
+	}
+
+	lines = append(lines, "bestmove e2e4 ponder d7d6")
+
+	eng := buildTestEngine(lines)
+
+	c := &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]Option),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch, err := c.Go(ctx, &SearchParams{Depth: 1})
+	require.NoError(t, err)
+
+	// Cancel immediately without reading any values from the channel.
+	cancel()
+
+	// The channel must close within a reasonable time (no deadlock).
+	deadline := time.After(2 * time.Second)
+	drained := make(chan struct{})
+
+	go func() {
+		//nolint:revive // drain to unblock any pending sends
+		for range ch {
+		}
+
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		// Good: channel closed cleanly.
+	case <-deadline:
+		t.Fatal("timeout: runSearch goroutine appears to be deadlocked")
+	}
+
+	// After cancellation, search must be inactive so the client can be reused.
+	assert.False(t, c.search.isActive(), "search should be inactive after context cancel")
+}
+
+// TestClient_Go_FullBuffer verifies that when the channel buffer fills up with
+// info lines, the bestmove line is still delivered and the channel closes
+// without deadlocking.
+func TestClient_Go_FullBuffer(t *testing.T) {
+	// Exactly fill the buffer (32) with info lines, then send bestmove.
+	lines := make([]string, 0, 33)
+	for i := 1; i <= 32; i++ {
+		lines = append(lines, "info depth 1 seldepth 1 multipv 1 score cp 17 nodes 20 nps 20000 hashfull 0 tbhits 0 time 1 pv e2e4")
+	}
+
+	lines = append(lines, "bestmove e2e4 ponder d7d6")
+
+	eng := buildTestEngine(lines)
+
+	c := &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]Option),
+	}
+
+	ch, err := c.Go(context.Background(), &SearchParams{Depth: 1})
+	require.NoError(t, err)
+
+	// Drain the channel slowly, giving the producer time to try sending more.
+	var results []SearchInfo
+
+	deadline := time.After(2 * time.Second)
+
+	for {
+		select {
+		case info, ok := <-ch:
+			if !ok {
+				// Channel closed: verify bestmove was delivered.
+				last := results[len(results)-1]
+				assert.True(t, last.IsBestMove, "last result should be bestmove")
+				assert.Equal(t, "e2e4", last.BestMove)
+				assert.False(t, c.search.isActive(), "search should be inactive after bestmove")
+
+				return
+			}
+
+			results = append(results, info)
+		case <-deadline:
+			t.Fatal("timeout: channel did not close — possible deadlock when buffer was full")
+		}
+	}
 }

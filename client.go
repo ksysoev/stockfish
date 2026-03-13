@@ -296,7 +296,12 @@ func (c *Client) runSearch(ctx context.Context, ch chan SearchInfo) {
 			if strings.HasPrefix(line, "bestmove") {
 				info, err := parseBestMoveLine(line)
 				if err == nil {
-					ch <- info
+					// Best-effort delivery: if the caller has already stopped
+					// reading (context cancelled), skip rather than block.
+					select {
+					case ch <- info:
+					case <-ctx.Done():
+					}
 				}
 
 				return
@@ -305,7 +310,14 @@ func (c *Client) runSearch(ctx context.Context, ch chan SearchInfo) {
 			if strings.HasPrefix(line, "info") {
 				info, err := parseInfoLine(line)
 				if err == nil && (info.Depth > 0 || info.CurrMove != "") {
-					ch <- info
+					// Non-blocking on cancellation: if the caller stops reading
+					// and the buffer fills, return rather than deadlock the
+					// engine read loop.
+					select {
+					case ch <- info:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 		}
