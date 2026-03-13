@@ -377,3 +377,114 @@ func TestClient_Eval_SearchInProgress(t *testing.T) {
 	_, err := c.Eval()
 	assert.ErrorIs(t, err, ErrSearchInProgress)
 }
+
+// helpers to build a closed client for ErrEngineNotRunning tests.
+func buildClosedClient() *Client {
+	eng := buildTestEngine(nil)
+
+	return &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]Option),
+		closed:  true,
+	}
+}
+
+func TestClient_IsReady_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	err := c.IsReady()
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_NewGame_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	err := c.NewGame()
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_SetOption_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	strVal := "4"
+	err := c.SetOption("Threads", &strVal)
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_SetPosition_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	err := c.SetPosition(StartPosition())
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_Go_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	_, err := c.Go(context.Background(), nil)
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_Bench_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	_, err := c.Bench(BenchParams{})
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_Eval_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	_, err := c.Eval()
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_Display_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	_, err := c.Display()
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_Flip_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	err := c.Flip()
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_Compiler_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	_, err := c.Compiler()
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_ExportNet_AfterClose(t *testing.T) {
+	c := buildClosedClient()
+	err := c.ExportNet("", "")
+	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestClient_Flip_SearchInProgress(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+	}
+
+	c.search.mu.Lock()
+	c.search.active = true
+	c.search.mu.Unlock()
+
+	err := c.Flip()
+	assert.ErrorIs(t, err, ErrSearchInProgress)
+}
+
+func TestClient_ExportNet_SearchInProgress(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+	}
+
+	c.search.mu.Lock()
+	c.search.active = true
+	c.search.mu.Unlock()
+
+	err := c.ExportNet("", "")
+	assert.ErrorIs(t, err, ErrSearchInProgress)
+}

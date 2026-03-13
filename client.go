@@ -118,6 +118,10 @@ func (c *Client) IsReady() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.closed {
+		return ErrEngineNotRunning
+	}
+
 	if c.search.isActive() {
 		return ErrSearchInProgress
 	}
@@ -150,6 +154,10 @@ func (c *Client) NewGame() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.closed {
+		return ErrEngineNotRunning
+	}
+
 	if c.search.isActive() {
 		return ErrSearchInProgress
 	}
@@ -165,12 +173,17 @@ func (c *Client) NewGame() error {
 // pass nil as value. For string-type options that should be set to the empty
 // string, pass a pointer to an empty string.
 //
+// Returns ErrEngineNotRunning if the client has been closed.
 // Returns ErrSearchInProgress if a search is active.
 // Returns ErrInvalidOption if name is not among the options reported by the
 // engine during initialisation.
 func (c *Client) SetOption(name string, value *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.closed {
+		return ErrEngineNotRunning
+	}
 
 	if c.search.isActive() {
 		return ErrSearchInProgress
@@ -190,10 +203,15 @@ func (c *Client) SetOption(name string, value *string) error {
 }
 
 // SetPosition sends a "position" command to the engine.
+// Returns ErrEngineNotRunning if the client has been closed.
 // Returns ErrSearchInProgress if a search is active.
 func (c *Client) SetPosition(pos Position) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.closed {
+		return ErrEngineNotRunning
+	}
 
 	if c.search.isActive() {
 		return ErrSearchInProgress
@@ -219,10 +237,17 @@ func (c *Client) SetPosition(pos Position) error {
 // params may be nil, in which case a default (unlimited) search is started.
 //
 // The search can be cancelled early by cancelling ctx, which will cause Stop to
-// be sent automatically.
+// be sent automatically. On cancellation the bestmove is drained internally and
+// the channel is closed without delivering a final bestmove entry.
+//
+// Returns ErrEngineNotRunning if the client has been closed.
 func (c *Client) Go(ctx context.Context, params *SearchParams) (<-chan SearchInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.closed {
+		return nil, ErrEngineNotRunning
+	}
 
 	if params == nil {
 		params = &SearchParams{}
@@ -290,9 +315,20 @@ func (c *Client) runSearch(ctx context.Context, ch chan SearchInfo) {
 // drainDiscardUntilBestMove reads and discards lines until bestmove, used
 // after context cancellation. It intentionally does not forward to any channel
 // so that a caller that has stopped reading cannot deadlock this goroutine.
+// It also selects on the engine's done channel so it returns promptly if the
+// engine process exits or crashes before emitting bestmove.
 func (c *Client) drainDiscardUntilBestMove() {
-	for line := range c.eng.lineCh {
-		if strings.HasPrefix(line, "bestmove") {
+	for {
+		select {
+		case line, ok := <-c.eng.lineCh:
+			if !ok {
+				return
+			}
+
+			if strings.HasPrefix(line, "bestmove") {
+				return
+			}
+		case <-c.eng.done:
 			return
 		}
 	}
@@ -347,6 +383,10 @@ func (c *Client) Bench(params BenchParams) ([]string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.closed {
+		return nil, ErrEngineNotRunning
+	}
+
 	if c.search.isActive() {
 		return nil, ErrSearchInProgress
 	}
@@ -372,6 +412,10 @@ func (c *Client) Bench(params BenchParams) ([]string, error) {
 // until "readyok", stripping the terminal readyok. It is used by non-standard
 // commands whose output has no well-defined terminator of its own.
 func (c *Client) sendAndReadUntilReady(cmd, sendErrMsg, readErrMsg string) (string, error) {
+	if c.closed {
+		return "", ErrEngineNotRunning
+	}
+
 	if c.search.isActive() {
 		return "", ErrSearchInProgress
 	}
@@ -424,6 +468,14 @@ func (c *Client) Flip() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.closed {
+		return ErrEngineNotRunning
+	}
+
+	if c.search.isActive() {
+		return ErrSearchInProgress
+	}
+
 	if err := c.eng.send("flip"); err != nil {
 		return fmt.Errorf("send flip: %w", err)
 	}
@@ -445,6 +497,14 @@ func (c *Client) Compiler() (string, error) {
 func (c *Client) ExportNet(bigNet, smallNet string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.closed {
+		return ErrEngineNotRunning
+	}
+
+	if c.search.isActive() {
+		return ErrSearchInProgress
+	}
 
 	var cmd string
 
