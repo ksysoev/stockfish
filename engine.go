@@ -71,17 +71,28 @@ func (p *process) readLine() (string, error) {
 }
 
 // close sends quit to stdin, closes the pipe, and waits for the process to
-// exit.
+// exit. The write and close are performed under p.mu so that no concurrent
+// writeLine call can interleave between them.
 func (p *process) close() error {
-	if err := p.writeLine("quit"); err != nil {
-		// Best effort — still try to close stdin.
-		_ = p.stdin.Close()
+	closeErr := func() error {
+		p.mu.Lock()
+		defer p.mu.Unlock()
 
-		return err
-	}
+		if _, err := fmt.Fprintln(p.stdin, "quit"); err != nil {
+			// Best effort — still try to close stdin.
+			_ = p.stdin.Close()
 
-	if err := p.stdin.Close(); err != nil {
-		return fmt.Errorf("close stdin: %w", err)
+			return fmt.Errorf("write quit: %w", err)
+		}
+
+		if err := p.stdin.Close(); err != nil {
+			return fmt.Errorf("close stdin: %w", err)
+		}
+
+		return nil
+	}()
+	if closeErr != nil {
+		return closeErr
 	}
 
 	if err := p.cmd.Wait(); err != nil {

@@ -165,11 +165,16 @@ func (c *Client) NewGame() error {
 // pass nil as value. For string-type options that should be set to the empty
 // string, pass a pointer to an empty string.
 //
+// Returns ErrSearchInProgress if a search is active.
 // Returns ErrInvalidOption if name is not among the options reported by the
 // engine during initialisation.
 func (c *Client) SetOption(name string, value *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.search.isActive() {
+		return ErrSearchInProgress
+	}
 
 	if _, ok := c.options[name]; !ok {
 		return &ErrInvalidOption{Name: name}
@@ -185,9 +190,14 @@ func (c *Client) SetOption(name string, value *string) error {
 }
 
 // SetPosition sends a "position" command to the engine.
+// Returns ErrSearchInProgress if a search is active.
 func (c *Client) SetPosition(pos Position) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.search.isActive() {
+		return ErrSearchInProgress
+	}
 
 	cmd, err := buildPositionCommand(pos)
 	if err != nil {
@@ -247,8 +257,10 @@ func (c *Client) runSearch(ctx context.Context, ch chan SearchInfo) {
 			if c.search.isActive() {
 				_ = c.eng.send("stop")
 			}
-			// Drain until bestmove to keep the engine in sync.
-			c.drainUntilBestMove(ch)
+			// Drain until bestmove to keep the engine in sync, but do NOT
+			// forward lines to ch: the caller has cancelled and may have stopped
+			// reading, so forwarding would deadlock this goroutine.
+			c.drainDiscardUntilBestMove()
 
 			return
 		case line, ok := <-c.eng.lineCh:
@@ -275,24 +287,13 @@ func (c *Client) runSearch(ctx context.Context, ch chan SearchInfo) {
 	}
 }
 
-// drainUntilBestMove reads and forwards lines until bestmove, used after a
-// stop is sent.
-func (c *Client) drainUntilBestMove(ch chan SearchInfo) {
+// drainDiscardUntilBestMove reads and discards lines until bestmove, used
+// after context cancellation. It intentionally does not forward to any channel
+// so that a caller that has stopped reading cannot deadlock this goroutine.
+func (c *Client) drainDiscardUntilBestMove() {
 	for line := range c.eng.lineCh {
 		if strings.HasPrefix(line, "bestmove") {
-			info, err := parseBestMoveLine(line)
-			if err == nil {
-				ch <- info
-			}
-
 			return
-		}
-
-		if strings.HasPrefix(line, "info") {
-			info, err := parseInfoLine(line)
-			if err == nil && (info.Depth > 0 || info.CurrMove != "") {
-				ch <- info
-			}
 		}
 	}
 }
@@ -301,6 +302,13 @@ func (c *Client) drainUntilBestMove(ch chan SearchInfo) {
 // search channel returned by Go will receive the final bestmove and then be
 // closed.
 func (c *Client) Stop() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		return ErrEngineNotRunning
+	}
+
 	if !c.search.isActive() {
 		return ErrNoSearchInProgress
 	}
@@ -315,6 +323,13 @@ func (c *Client) Stop() error {
 // PonderHit sends the "ponderhit" command, switching the engine from pondering
 // to normal search mode.
 func (c *Client) PonderHit() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		return ErrEngineNotRunning
+	}
+
 	if !c.search.isActive() {
 		return ErrNoSearchInProgress
 	}

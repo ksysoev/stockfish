@@ -142,7 +142,7 @@ func TestParseInfoLine(t *testing.T) {
 				Depth:    7,
 				SelDepth: 10,
 				MultiPV:  1,
-				Score:    Score{Type: ScoreTypeUpperBound, Value: 54},
+				Score:    Score{Type: ScoreTypeCentipawns, Bound: ScoreBoundUpper, Value: 54},
 				Nodes:    1003,
 				NPS:      38576,
 				Time:     26,

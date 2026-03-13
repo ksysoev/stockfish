@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// ScoreType indicates how the search score should be interpreted.
+// ScoreType indicates whether the score is in centipawns or mate distance.
 type ScoreType string
 
 const (
@@ -17,16 +17,27 @@ const (
 	ScoreTypeCentipawns ScoreType = "cp"
 	// ScoreTypeMate means the score is mate-in-N (negative = being mated).
 	ScoreTypeMate ScoreType = "mate"
-	// ScoreTypeLowerBound means the score is a lower bound on the true value.
-	ScoreTypeLowerBound ScoreType = "lowerbound"
-	// ScoreTypeUpperBound means the score is an upper bound on the true value.
-	ScoreTypeUpperBound ScoreType = "upperbound"
+)
+
+// ScoreBound indicates whether the score is an exact value or a bound.
+type ScoreBound string
+
+const (
+	// ScoreBoundExact means the score is the exact minimax value.
+	ScoreBoundExact ScoreBound = ""
+	// ScoreBoundLower means the score is a lower bound (fail-high) on the true value.
+	ScoreBoundLower ScoreBound = "lowerbound"
+	// ScoreBoundUpper means the score is an upper bound (fail-low) on the true value.
+	ScoreBoundUpper ScoreBound = "upperbound"
 )
 
 // Score holds the evaluation score from a search info line.
 type Score struct {
-	// Type indicates how Value should be interpreted.
+	// Type indicates whether Value is in centipawns or mate-in-N.
 	Type ScoreType
+	// Bound indicates whether the score is exact, a lower bound, or an upper bound.
+	// ScoreBoundExact (empty string) means the score is the exact minimax value.
+	Bound ScoreBound
 	// Value is the numeric score (centipawns or mate-in-N).
 	Value int
 }
@@ -327,12 +338,12 @@ func parseScore(tokens []string) (Score, int, error) {
 	for consumed < len(tokens) {
 		switch tokens[consumed] {
 		case "lowerbound":
-			s.Type = ScoreTypeLowerBound
+			s.Bound = ScoreBoundLower
 			consumed++
 
 			continue
 		case "upperbound":
-			s.Type = ScoreTypeUpperBound
+			s.Bound = ScoreBoundUpper
 			consumed++
 
 			continue
