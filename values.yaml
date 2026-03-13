@@ -1,4 +1,0 @@
-name: Stockfish Go
-package: stockfish
-repo: github.com/ksysoev/stockfish
-description: "A Go wrapper library for the Stockfish chess engine implementing the Universal Chess Interface (UCI) protocol. Provides a clean, idiomatic Go API for launching and communicating with the Stockfish process, setting options, configuring positions, streaming search results, and issuing both standard and non-standard UCI commands."
