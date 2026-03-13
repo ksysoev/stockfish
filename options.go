@@ -128,11 +128,12 @@ func collectUntilKeyword(tokens, stop []string) []string {
 }
 
 // buildSetOption constructs the UCI "setoption" command string.
-// For button-type options, value may be empty.
-func buildSetOption(name, value string) string {
-	if value == "" {
+// A nil value produces a button-type command (no "value" clause).
+// A non-nil pointer (including pointer to empty string) produces a value clause.
+func buildSetOption(name string, value *string) string {
+	if value == nil {
 		return fmt.Sprintf("setoption name %s", name)
 	}
 
-	return fmt.Sprintf("setoption name %s value %s", name, value)
+	return fmt.Sprintf("setoption name %s value %s", name, *value)
 }

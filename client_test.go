@@ -118,6 +118,22 @@ func TestClient_SetPosition_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestClient_SetPosition_BothStartPosAndFEN(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]Option),
+	}
+
+	err := c.SetPosition(Position{StartPos: true, FEN: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"})
+
+	var posErr *ErrInvalidPosition
+
+	assert.ErrorAs(t, err, &posErr)
+}
+
 func TestClient_Stop_NoSearch(t *testing.T) {
 	eng := buildTestEngine(nil)
 
@@ -182,6 +198,34 @@ func TestClient_Go_StreamsResults(t *testing.T) {
 	assert.Equal(t, "d7d6", results[2].PonderMove)
 }
 
+func TestClient_Go_NilParams(t *testing.T) {
+	searchLines := []string{
+		"bestmove e2e4",
+	}
+
+	eng := buildTestEngine(searchLines)
+
+	c := &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]Option),
+	}
+
+	ctx := context.Background()
+	ch, err := c.Go(ctx, nil)
+
+	require.NoError(t, err)
+
+	var results []SearchInfo
+
+	for info := range ch {
+		results = append(results, info)
+	}
+
+	require.Len(t, results, 1)
+	assert.True(t, results[0].IsBestMove)
+}
+
 func TestClient_Go_DoubleStart(t *testing.T) {
 	eng := buildTestEngine(nil)
 
@@ -199,5 +243,137 @@ func TestClient_Go_DoubleStart(t *testing.T) {
 	c.search.mu.Unlock()
 
 	_, err := c.Go(ctx, &SearchParams{Depth: 1})
+	assert.ErrorIs(t, err, ErrSearchInProgress)
+}
+
+func TestClient_SetOption_InvalidOption(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]Option),
+	}
+
+	strVal := "4"
+	err := c.SetOption("NonExistentOption", &strVal)
+
+	var optErr *ErrInvalidOption
+	require.ErrorAs(t, err, &optErr)
+	assert.Equal(t, "NonExistentOption", optErr.Name)
+}
+
+func TestClient_SetOption_ValidOption(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+		options: map[string]Option{
+			"Threads": {Name: "Threads", Type: OptionTypeSpin},
+		},
+	}
+
+	strVal := "4"
+	err := c.SetOption("Threads", &strVal)
+	assert.NoError(t, err)
+}
+
+func TestClient_SetOption_ButtonType(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+		options: map[string]Option{
+			"Clear Hash": {Name: "Clear Hash", Type: OptionTypeButton},
+		},
+	}
+
+	// nil value = button
+	err := c.SetOption("Clear Hash", nil)
+	assert.NoError(t, err)
+}
+
+func TestClient_Close_Idempotent(t *testing.T) {
+	// Build a client with a fake engine that has a no-op close.
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]Option),
+		closed:  false,
+	}
+
+	// Mark as already closed to simulate second call.
+	c.closed = true
+
+	// Second close should be a no-op.
+	err := c.Close()
+	assert.NoError(t, err)
+}
+
+func TestClient_IsReady_SearchInProgress(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+	}
+
+	c.search.mu.Lock()
+	c.search.active = true
+	c.search.mu.Unlock()
+
+	err := c.IsReady()
+	assert.ErrorIs(t, err, ErrSearchInProgress)
+}
+
+func TestClient_NewGame_SearchInProgress(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+	}
+
+	c.search.mu.Lock()
+	c.search.active = true
+	c.search.mu.Unlock()
+
+	err := c.NewGame()
+	assert.ErrorIs(t, err, ErrSearchInProgress)
+}
+
+func TestClient_Bench_SearchInProgress(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+	}
+
+	c.search.mu.Lock()
+	c.search.active = true
+	c.search.mu.Unlock()
+
+	_, err := c.Bench(BenchParams{})
+	assert.ErrorIs(t, err, ErrSearchInProgress)
+}
+
+func TestClient_Eval_SearchInProgress(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+	}
+
+	c.search.mu.Lock()
+	c.search.active = true
+	c.search.mu.Unlock()
+
+	_, err := c.Eval()
 	assert.ErrorIs(t, err, ErrSearchInProgress)
 }

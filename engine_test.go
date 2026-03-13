@@ -1,6 +1,7 @@
 package stockfish
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestEngineReadUntil(t *testing.T) {
 
 	eng := buildTestEngine(lines)
 
-	collected, err := eng.readUntil(func(line string) bool {
+	collected, err := eng.readUntil(context.Background(), func(line string) bool {
 		return line == "uciok"
 	})
 
@@ -40,11 +41,26 @@ func TestEngineReadUntil_ChannelClosed(t *testing.T) {
 	for range eng.lineCh { //nolint:revive // intentional drain
 	}
 
-	_, err := eng.readUntil(func(line string) bool {
+	_, err := eng.readUntil(context.Background(), func(line string) bool {
 		return line == "never"
 	})
 
 	assert.ErrorIs(t, err, ErrEngineNotRunning)
+}
+
+func TestEngineReadUntil_ContextCancelled(t *testing.T) {
+	// Channel with no lines — context cancellation should return ErrEngineTimeout.
+	eng := &engine{
+		lineCh: make(chan string),
+		errCh:  make(chan error, 1),
+		done:   make(chan struct{}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err := eng.readUntil(ctx, func(string) bool { return false })
+	assert.ErrorIs(t, err, ErrEngineTimeout)
 }
 
 func TestIsClosedPipeError(t *testing.T) {
@@ -81,7 +97,7 @@ func TestEngineReadUntil_PredicateNotMet(t *testing.T) {
 	// Provide lines that never satisfy the predicate — channel closes first.
 	eng := buildTestEngine([]string{"line1", "line2"})
 
-	collected, err := eng.readUntil(func(line string) bool {
+	collected, err := eng.readUntil(context.Background(), func(line string) bool {
 		return strings.HasPrefix(line, "NEVER")
 	})
 

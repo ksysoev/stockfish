@@ -65,6 +65,11 @@ func TestBuildPositionCommand(t *testing.T) {
 			pos:     Position{},
 			wantErr: true,
 		},
+		{
+			name:    "both StartPos and FEN set",
+			pos:     Position{StartPos: true, FEN: "8/8/8/8/8/8/8/8 w - - 0 1"},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range tests {

@@ -2,6 +2,7 @@ package stockfish
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -148,13 +149,17 @@ func (e *engine) send(line string) error {
 }
 
 // readUntil reads lines from the engine until a line satisfying the predicate
-// is found or the done channel is closed. It returns all consumed lines
-// (including the terminating line).
-func (e *engine) readUntil(pred func(string) bool) ([]string, error) {
+// is found, the context is cancelled, or the channel is closed. It returns all
+// consumed lines (including the terminating line). If the context is cancelled
+// before the predicate is satisfied, ErrEngineTimeout is returned.
+func (e *engine) readUntil(ctx context.Context, pred func(string) bool) ([]string, error) {
 	var lines []string
 
 	for {
 		select {
+		case <-ctx.Done():
+			return lines, ErrEngineTimeout
+
 		case line, ok := <-e.lineCh:
 			if !ok {
 				return lines, ErrEngineNotRunning

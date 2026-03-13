@@ -89,14 +89,17 @@ func TestParseOption_Invalid(t *testing.T) {
 }
 
 func TestBuildSetOption(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+
 	tests := []struct {
 		name  string
-		value string
+		value *string
 		want  string
 	}{
-		{"Threads", "4", "setoption name Threads value 4"},
-		{"Clear Hash", "", "setoption name Clear Hash"},
-		{"SyzygyPath", "/tb", "setoption name SyzygyPath value /tb"},
+		{"Threads", strPtr("4"), "setoption name Threads value 4"},
+		{"Clear Hash", nil, "setoption name Clear Hash"},
+		{"SyzygyPath", strPtr("/tb"), "setoption name SyzygyPath value /tb"},
+		{"Debug Log File", strPtr(""), "setoption name Debug Log File value "},
 	}
 
 	for _, tc := range tests {

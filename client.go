@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
-const readyOK = "readyok"
+const (
+	readyOK          = "readyok"
+	defaultHandshake = 30 * time.Second
+)
 
 // Client is a high-level UCI client that manages the lifecycle of a Stockfish
 // engine process and provides methods for all standard and non-standard UCI
@@ -22,6 +26,7 @@ type Client struct {
 	name    string
 	author  string
 	mu      sync.Mutex
+	closed  bool
 }
 
 // New launches the Stockfish binary at path, performs the UCI handshake, and
@@ -55,7 +60,10 @@ func (c *Client) initialize() error {
 		return err
 	}
 
-	lines, err := c.eng.readUntil(func(line string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultHandshake)
+	defer cancel()
+
+	lines, err := c.eng.readUntil(ctx, func(line string) bool {
 		return line == "uciok"
 	})
 	if err != nil {
@@ -110,6 +118,10 @@ func (c *Client) IsReady() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.search.isActive() {
+		return ErrSearchInProgress
+	}
+
 	return c.isReady()
 }
 
@@ -119,7 +131,10 @@ func (c *Client) isReady() error {
 		return fmt.Errorf("send isready: %w", err)
 	}
 
-	_, err := c.eng.readUntil(func(line string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultHandshake)
+	defer cancel()
+
+	_, err := c.eng.readUntil(ctx, func(line string) bool {
 		return line == readyOK
 	})
 	if err != nil {
@@ -135,6 +150,10 @@ func (c *Client) NewGame() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.search.isActive() {
+		return ErrSearchInProgress
+	}
+
 	if err := c.eng.send("ucinewgame"); err != nil {
 		return fmt.Errorf("send ucinewgame: %w", err)
 	}
@@ -143,10 +162,18 @@ func (c *Client) NewGame() error {
 }
 
 // SetOption sends a "setoption" command to the engine. For button-type options
-// pass an empty string as value.
-func (c *Client) SetOption(name, value string) error {
+// pass nil as value. For string-type options that should be set to the empty
+// string, pass a pointer to an empty string.
+//
+// Returns ErrInvalidOption if name is not among the options reported by the
+// engine during initialisation.
+func (c *Client) SetOption(name string, value *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if _, ok := c.options[name]; !ok {
+		return &ErrInvalidOption{Name: name}
+	}
 
 	cmd := buildSetOption(name, value)
 
@@ -179,11 +206,17 @@ func (c *Client) SetPosition(pos Position) error {
 // a final SearchInfo where IsBestMove is true (containing BestMove and
 // optionally PonderMove). The channel is closed after the bestmove line.
 //
+// params may be nil, in which case a default (unlimited) search is started.
+//
 // The search can be cancelled early by cancelling ctx, which will cause Stop to
 // be sent automatically.
 func (c *Client) Go(ctx context.Context, params *SearchParams) (<-chan SearchInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if params == nil {
+		params = &SearchParams{}
+	}
 
 	ch, searchCtx, err := c.search.start(ctx)
 	if err != nil {
@@ -209,9 +242,11 @@ func (c *Client) runSearch(ctx context.Context, ch chan SearchInfo) {
 	for {
 		select {
 		case <-ctx.Done():
-			// Context cancelled — send stop if the search state thinks it is
-			// still active (it may have already received bestmove).
-			_ = c.eng.send("stop")
+			// Only send stop if the search is still active — it may have already
+			// received bestmove and called finish() on the other branch.
+			if c.search.isActive() {
+				_ = c.eng.send("stop")
+			}
 			// Drain until bestmove to keep the engine in sync.
 			c.drainUntilBestMove(ch)
 
@@ -292,10 +327,14 @@ func (c *Client) PonderHit() error {
 }
 
 // Bench runs the non-standard "bench" command and returns the raw output lines.
-// The channel is closed after the "===" summary terminator line.
-func (c *Client) Bench(params BenchParams) (<-chan string, error) {
+// It blocks until the "===" summary terminator line is received.
+func (c *Client) Bench(params BenchParams) ([]string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.search.isActive() {
+		return nil, ErrSearchInProgress
+	}
 
 	cmd := buildBenchCommand(params)
 
@@ -303,21 +342,48 @@ func (c *Client) Bench(params BenchParams) (<-chan string, error) {
 		return nil, fmt.Errorf("send bench: %w", err)
 	}
 
-	ch := make(chan string, 64)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultHandshake)
+	defer cancel()
 
-	go func() {
-		defer close(ch)
+	lines, err := c.eng.readUntil(ctx, benchTerminator)
+	if err != nil {
+		return nil, fmt.Errorf("read bench output: %w", err)
+	}
 
-		for line := range c.eng.lineCh {
-			ch <- line
+	return lines, nil
+}
 
-			if benchTerminator(line) {
-				return
-			}
-		}
-	}()
+// sendAndReadUntilReady sends cmd, then sends "isready" and collects all lines
+// until "readyok", stripping the terminal readyok. It is used by non-standard
+// commands whose output has no well-defined terminator of its own.
+func (c *Client) sendAndReadUntilReady(cmd, sendErrMsg, readErrMsg string) (string, error) {
+	if c.search.isActive() {
+		return "", ErrSearchInProgress
+	}
 
-	return ch, nil
+	if err := c.eng.send(cmd); err != nil {
+		return "", fmt.Errorf("%s: %w", sendErrMsg, err)
+	}
+
+	if err := c.eng.send("isready"); err != nil {
+		return "", fmt.Errorf("send isready after %s: %w", cmd, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultHandshake)
+	defer cancel()
+
+	lines, err := c.eng.readUntil(ctx, func(line string) bool {
+		return line == readyOK
+	})
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", readErrMsg, err)
+	}
+
+	if len(lines) > 0 && lines[len(lines)-1] == readyOK {
+		lines = lines[:len(lines)-1]
+	}
+
+	return strings.Join(lines, "\n"), nil
 }
 
 // Eval sends the non-standard "eval" command and returns the full output as a
@@ -326,28 +392,7 @@ func (c *Client) Eval() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.eng.send("eval"); err != nil {
-		return "", fmt.Errorf("send eval: %w", err)
-	}
-
-	// eval output ends when the engine becomes idle again; use isready as sync.
-	if err := c.eng.send("isready"); err != nil {
-		return "", fmt.Errorf("send isready after eval: %w", err)
-	}
-
-	lines, err := c.eng.readUntil(func(line string) bool {
-		return line == readyOK
-	})
-	if err != nil {
-		return "", fmt.Errorf("read eval output: %w", err)
-	}
-
-	// Drop the terminal "readyok" line.
-	if len(lines) > 0 && lines[len(lines)-1] == readyOK {
-		lines = lines[:len(lines)-1]
-	}
-
-	return strings.Join(lines, "\n"), nil
+	return c.sendAndReadUntilReady("eval", "send eval", "read eval output")
 }
 
 // Display sends the non-standard "d" command and returns the board display
@@ -356,26 +401,7 @@ func (c *Client) Display() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.eng.send("d"); err != nil {
-		return "", fmt.Errorf("send d: %w", err)
-	}
-
-	if err := c.eng.send("isready"); err != nil {
-		return "", fmt.Errorf("send isready after d: %w", err)
-	}
-
-	lines, err := c.eng.readUntil(func(line string) bool {
-		return line == readyOK
-	})
-	if err != nil {
-		return "", fmt.Errorf("read d output: %w", err)
-	}
-
-	if len(lines) > 0 && lines[len(lines)-1] == readyOK {
-		lines = lines[:len(lines)-1]
-	}
-
-	return strings.Join(lines, "\n"), nil
+	return c.sendAndReadUntilReady("d", "send d", "read d output")
 }
 
 // Flip sends the non-standard "flip" command which flips the side to move.
@@ -396,26 +422,7 @@ func (c *Client) Compiler() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.eng.send("compiler"); err != nil {
-		return "", fmt.Errorf("send compiler: %w", err)
-	}
-
-	if err := c.eng.send("isready"); err != nil {
-		return "", fmt.Errorf("send isready after compiler: %w", err)
-	}
-
-	lines, err := c.eng.readUntil(func(line string) bool {
-		return line == readyOK
-	})
-	if err != nil {
-		return "", fmt.Errorf("read compiler output: %w", err)
-	}
-
-	if len(lines) > 0 && lines[len(lines)-1] == readyOK {
-		lines = lines[:len(lines)-1]
-	}
-
-	return strings.Join(lines, "\n"), nil
+	return c.sendAndReadUntilReady("compiler", "send compiler", "read compiler output")
 }
 
 // ExportNet sends the non-standard "export_net" command. Pass empty strings for
@@ -443,10 +450,17 @@ func (c *Client) ExportNet(bigNet, smallNet string) error {
 }
 
 // Close sends "quit" to the engine and waits for the process to exit, releasing
-// all resources. It is safe to call Close multiple times.
+// all resources. It is safe to call Close multiple times; subsequent calls
+// return nil immediately.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.closed {
+		return nil
+	}
+
+	c.closed = true
 
 	if err := c.eng.proc.close(); err != nil {
 		return fmt.Errorf("close engine: %w", err)

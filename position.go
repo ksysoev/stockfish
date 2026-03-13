@@ -46,6 +46,10 @@ func (p Position) WithMoves(moves ...string) Position {
 // buildPositionCommand converts the Position into a UCI "position" command
 // string.
 func buildPositionCommand(pos Position) (string, error) {
+	if pos.StartPos && pos.FEN != "" {
+		return "", &ErrInvalidPosition{Detail: "StartPos and FEN are mutually exclusive; set only one"}
+	}
+
 	var sb strings.Builder
 
 	sb.WriteString("position ")
