@@ -25,6 +25,25 @@ func ExampleNew() {
 	}
 }
 
+// ExampleNew_withOptions demonstrates launching the engine and applying typed
+// options in a single call so the client is fully configured before use.
+func ExampleNew_withOptions() {
+	client, err := stockfish.New(
+		"/usr/local/bin/stockfish",
+		stockfish.WithThreads(4),
+		stockfish.WithHash(256),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Engine:", client.Name())
+
+	if err = client.Close(); err != nil {
+		log.Fatal(err)
+	}
+}
+
 // ExampleClient_Go demonstrates setting the starting position, running a
 // depth-limited search, and printing the principal variation at each depth
 // together with the final best move.
@@ -58,23 +77,20 @@ func ExampleClient_Go() {
 	}
 }
 
-// ExampleClient_SetOption demonstrates configuring engine options before
-// starting a search. Spin options (like Threads) require a string value;
-// button options (like Clear Hash) require nil.
-func ExampleClient_SetOption() {
+// ExampleClient_Apply demonstrates configuring engine options before starting
+// a search using the typed option constructors.
+func ExampleClient_Apply() {
 	client, err := stockfish.New("/usr/local/bin/stockfish")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Set thread count (spin option).
-	threads := "4"
-	if err = client.SetOption("Threads", &threads); err != nil {
-		log.Fatal(err)
-	}
-
-	// Trigger a button option — no value needed.
-	if err = client.SetOption("Clear Hash", nil); err != nil {
+	// Set thread count and hash table size, then clear the hash table.
+	if err = client.Apply(
+		stockfish.WithThreads(4),
+		stockfish.WithHash(256),
+		stockfish.WithClearHash(),
+	); err != nil {
 		log.Fatal(err)
 	}
 

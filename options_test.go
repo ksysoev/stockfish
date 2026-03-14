@@ -88,30 +88,308 @@ func TestParseOption_Invalid(t *testing.T) {
 	}
 }
 
-func TestBuildSetOption(t *testing.T) {
-	strPtr := func(s string) *string { return &s }
-
-	tests := []struct {
-		name  string
-		value *string
-		want  string
-	}{
-		{"Threads", strPtr("4"), "setoption name Threads value 4"},
-		{"Clear Hash", nil, "setoption name Clear Hash"},
-		{"SyzygyPath", strPtr("/tb"), "setoption name SyzygyPath value /tb"},
-		{"Debug Log File", strPtr(""), "setoption name Debug Log File value "},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := buildSetOption(tc.name, tc.value)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
 func TestCollectUntilKeyword(t *testing.T) {
 	tokens := []string{"nn-abc.nnue", "min", "1"}
 	result := collectUntilKeyword(tokens, []string{"min", "max"})
 	assert.Equal(t, []string{"nn-abc.nnue"}, result)
+}
+
+// buildTestClientWithOptions returns a Client with a fake engine and a
+// pre-populated options map, suitable for testing option constructors.
+func buildTestClientWithOptions(opts map[string]OptionInfo) *Client {
+	eng := buildTestEngine(nil)
+
+	return &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: opts,
+	}
+}
+
+// buildCapturingClientWithOptions returns a Client whose engine captures sent
+// commands, together with the writer so tests can assert exact UCI strings.
+func buildCapturingClientWithOptions(opts map[string]OptionInfo) (*Client, *capturingWriter) {
+	eng, cw := buildCapturingEngine(nil)
+
+	return &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: opts,
+	}, cw
+}
+
+// --- WithSpinOption ---
+
+func TestWithSpinOption_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+	})
+
+	err := WithSpinOption("Threads", 4)(c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"setoption name Threads value 4"}, cw.sentLines())
+}
+
+func TestWithSpinOption_NotFound(t *testing.T) {
+	c := buildTestClientWithOptions(nil)
+
+	err := WithSpinOption("Threads", 4)(c)
+
+	var notFound *ErrOptionNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, "Threads", notFound.Name)
+}
+
+func TestWithSpinOption_TypeMismatch(t *testing.T) {
+	c := buildTestClientWithOptions(map[string]OptionInfo{
+		"Ponder": {Name: "Ponder", Type: OptionTypeCheck},
+	})
+
+	err := WithSpinOption("Ponder", 1)(c)
+
+	var mismatch *ErrOptionTypeMismatch
+	require.ErrorAs(t, err, &mismatch)
+	assert.Equal(t, OptionTypeSpin, mismatch.Expected)
+	assert.Equal(t, OptionTypeCheck, mismatch.Got)
+}
+
+func TestWithSpinOption_OutOfRange(t *testing.T) {
+	c := buildTestClientWithOptions(map[string]OptionInfo{
+		"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 8},
+	})
+
+	err := WithSpinOption("Threads", 100)(c)
+
+	var oor *ErrOptionOutOfRange
+	require.ErrorAs(t, err, &oor)
+	assert.Equal(t, 100, oor.Value)
+	assert.Equal(t, 1, oor.Min)
+	assert.Equal(t, 8, oor.Max)
+}
+
+// --- WithCheckOption ---
+
+func TestWithCheckOption_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Ponder": {Name: "Ponder", Type: OptionTypeCheck},
+	})
+
+	err := WithCheckOption("Ponder", true)(c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"setoption name Ponder value true"}, cw.sentLines())
+}
+
+func TestWithCheckOption_NotFound(t *testing.T) {
+	c := buildTestClientWithOptions(nil)
+
+	err := WithCheckOption("Ponder", true)(c)
+
+	var notFound *ErrOptionNotFound
+	require.ErrorAs(t, err, &notFound)
+}
+
+func TestWithCheckOption_TypeMismatch(t *testing.T) {
+	c := buildTestClientWithOptions(map[string]OptionInfo{
+		"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+	})
+
+	err := WithCheckOption("Threads", true)(c)
+
+	var mismatch *ErrOptionTypeMismatch
+	require.ErrorAs(t, err, &mismatch)
+	assert.Equal(t, OptionTypeCheck, mismatch.Expected)
+	assert.Equal(t, OptionTypeSpin, mismatch.Got)
+}
+
+// --- WithComboOption ---
+
+func TestWithComboOption_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"NumaPolicy": {Name: "NumaPolicy", Type: OptionTypeCombo, Vars: []string{"auto", "none"}},
+	})
+
+	err := WithComboOption("NumaPolicy", "auto")(c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"setoption name NumaPolicy value auto"}, cw.sentLines())
+}
+
+func TestWithComboOption_InvalidValue(t *testing.T) {
+	c := buildTestClientWithOptions(map[string]OptionInfo{
+		"NumaPolicy": {Name: "NumaPolicy", Type: OptionTypeCombo, Vars: []string{"auto", "none"}},
+	})
+
+	err := WithComboOption("NumaPolicy", "bogus")(c)
+
+	var invalid *ErrOptionInvalidValue
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, "bogus", invalid.Value)
+	assert.Equal(t, []string{"auto", "none"}, invalid.Allowed)
+}
+
+func TestWithComboOption_TypeMismatch(t *testing.T) {
+	c := buildTestClientWithOptions(map[string]OptionInfo{
+		"Ponder": {Name: "Ponder", Type: OptionTypeCheck},
+	})
+
+	err := WithComboOption("Ponder", "auto")(c)
+
+	var mismatch *ErrOptionTypeMismatch
+	require.ErrorAs(t, err, &mismatch)
+	assert.Equal(t, OptionTypeCombo, mismatch.Expected)
+}
+
+// --- WithStringOption ---
+
+func TestWithStringOption_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"SyzygyPath": {Name: "SyzygyPath", Type: OptionTypeString},
+	})
+
+	err := WithStringOption("SyzygyPath", "/tb")(c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"setoption name SyzygyPath value /tb"}, cw.sentLines())
+}
+
+func TestWithStringOption_TypeMismatch(t *testing.T) {
+	c := buildTestClientWithOptions(map[string]OptionInfo{
+		"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+	})
+
+	err := WithStringOption("Threads", "4")(c)
+
+	var mismatch *ErrOptionTypeMismatch
+	require.ErrorAs(t, err, &mismatch)
+	assert.Equal(t, OptionTypeString, mismatch.Expected)
+}
+
+func TestWithStringOption_NewlineRejected(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"LF in value", "/tb\n/evil"},
+		{"CR in value", "/tb\r/evil"},
+		{"CRLF in value", "/tb\r\n/evil"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := buildTestClientWithOptions(map[string]OptionInfo{
+				"SyzygyPath": {Name: "SyzygyPath", Type: OptionTypeString},
+			})
+
+			err := WithStringOption("SyzygyPath", tc.value)(c)
+
+			var invalidChars *ErrOptionInvalidCharacters
+			require.ErrorAs(t, err, &invalidChars)
+			assert.Equal(t, "SyzygyPath", invalidChars.Name)
+			assert.Equal(t, tc.value, invalidChars.Value)
+		})
+	}
+}
+
+// --- WithButtonOption ---
+
+func TestWithButtonOption_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Clear Hash": {Name: "Clear Hash", Type: OptionTypeButton},
+	})
+
+	err := WithButtonOption("Clear Hash")(c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"setoption name Clear Hash"}, cw.sentLines())
+}
+
+func TestWithButtonOption_TypeMismatch(t *testing.T) {
+	c := buildTestClientWithOptions(map[string]OptionInfo{
+		"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+	})
+
+	err := WithButtonOption("Threads")(c)
+
+	var mismatch *ErrOptionTypeMismatch
+	require.ErrorAs(t, err, &mismatch)
+	assert.Equal(t, OptionTypeButton, mismatch.Expected)
+}
+
+// --- Named helpers delegate to generic constructors ---
+
+func TestWithThreads_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+	})
+	require.NoError(t, WithThreads(4)(c))
+	assert.Equal(t, []string{"setoption name Threads value 4"}, cw.sentLines())
+}
+
+func TestWithHash_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Hash": {Name: "Hash", Type: OptionTypeSpin, Min: 1, Max: 33554432},
+	})
+	require.NoError(t, WithHash(256)(c))
+	assert.Equal(t, []string{"setoption name Hash value 256"}, cw.sentLines())
+}
+
+func TestWithPonder_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Ponder": {Name: "Ponder", Type: OptionTypeCheck},
+	})
+	require.NoError(t, WithPonder(true)(c))
+	assert.Equal(t, []string{"setoption name Ponder value true"}, cw.sentLines())
+}
+
+func TestWithMultiPV_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"MultiPV": {Name: "MultiPV", Type: OptionTypeSpin, Min: 1, Max: 500},
+	})
+	require.NoError(t, WithMultiPV(3)(c))
+	assert.Equal(t, []string{"setoption name MultiPV value 3"}, cw.sentLines())
+}
+
+func TestWithSkillLevel_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Skill Level": {Name: "Skill Level", Type: OptionTypeSpin, Min: 0, Max: 20},
+	})
+	require.NoError(t, WithSkillLevel(10)(c))
+	assert.Equal(t, []string{"setoption name Skill Level value 10"}, cw.sentLines())
+}
+
+func TestWithMoveOverhead_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Move Overhead": {Name: "Move Overhead", Type: OptionTypeSpin, Min: 0, Max: 5000},
+	})
+	require.NoError(t, WithMoveOverhead(50)(c))
+	assert.Equal(t, []string{"setoption name Move Overhead value 50"}, cw.sentLines())
+}
+
+func TestWithClearHash_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"Clear Hash": {Name: "Clear Hash", Type: OptionTypeButton},
+	})
+	require.NoError(t, WithClearHash()(c))
+	assert.Equal(t, []string{"setoption name Clear Hash"}, cw.sentLines())
+}
+
+func TestWithUCIChess960_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"UCI_Chess960": {Name: "UCI_Chess960", Type: OptionTypeCheck},
+	})
+	require.NoError(t, WithUCIChess960(true)(c))
+	assert.Equal(t, []string{"setoption name UCI_Chess960 value true"}, cw.sentLines())
+}
+
+func TestWithSyzygyPath_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"SyzygyPath": {Name: "SyzygyPath", Type: OptionTypeString},
+	})
+	require.NoError(t, WithSyzygyPath("/tb")(c))
+	assert.Equal(t, []string{"setoption name SyzygyPath value /tb"}, cw.sentLines())
+}
+
+func TestWithUCIAnalyseMode_Valid(t *testing.T) {
+	c, cw := buildCapturingClientWithOptions(map[string]OptionInfo{
+		"UCI_AnalyseMode": {Name: "UCI_AnalyseMode", Type: OptionTypeCheck},
+	})
+	require.NoError(t, WithUCIAnalyseMode(true)(c))
+	assert.Equal(t, []string{"setoption name UCI_AnalyseMode value true"}, cw.sentLines())
 }

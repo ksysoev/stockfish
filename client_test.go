@@ -66,8 +66,64 @@ func buildTestEngine(outputLines []string) *engine {
 	return eng
 }
 
+// capturingWriter is an io.WriteCloser that records everything written to it.
+type capturingWriter struct {
+	buf strings.Builder
+}
+
+func (w *capturingWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+func (w *capturingWriter) Close() error                { return nil }
+
+// sentLines returns the lines written to the engine's stdin, trimming the
+// trailing newline that writeLine appends to each command.
+func (w *capturingWriter) sentLines() []string {
+	raw := w.buf.String()
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+
+	return parts
+}
+
+// buildCapturingEngine creates an engine that captures everything sent to stdin.
+// It returns the engine and the writer so tests can inspect sent commands.
+func buildCapturingEngine(outputLines []string) (*engine, *capturingWriter) {
+	proc := newFakeProcess(outputLines)
+	cw := &capturingWriter{}
+
+	eng := &engine{
+		lineCh: make(chan string, 64),
+		errCh:  make(chan error, 1),
+		done:   make(chan struct{}),
+	}
+
+	go func() {
+		defer close(eng.lineCh)
+		defer close(eng.done)
+
+		for _, line := range proc.output {
+			if line != "" {
+				eng.lineCh <- line
+			}
+		}
+	}()
+
+	eng.proc = &process{stdin: cw, reader: proc.reader}
+
+	return eng, cw
+}
+
 func TestNew_InvalidPath(t *testing.T) {
 	_, err := New("/nonexistent/stockfish")
+	assert.Error(t, err)
+}
+
+func TestNew_WithOptions_NilOption(t *testing.T) {
+	_, err := New("/nonexistent/stockfish", nil)
+	// The process launch fails first, so we still get an error — the important
+	// thing is that passing nil doesn't panic.
 	assert.Error(t, err)
 }
 
@@ -87,7 +143,7 @@ func TestClient_OptionsAndMeta(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	err := c.initialize()
@@ -112,7 +168,7 @@ func TestClient_SetPosition_Error(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	err := c.SetPosition(Position{})
@@ -125,7 +181,7 @@ func TestClient_SetPosition_BothStartPosAndFEN(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	err := c.SetPosition(Position{StartPos: true, FEN: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"})
@@ -171,7 +227,7 @@ func TestClient_Go_StreamsResults(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ctx := context.Background()
@@ -209,7 +265,7 @@ func TestClient_Go_NilParams(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ctx := context.Background()
@@ -233,7 +289,7 @@ func TestClient_Go_DoubleStart(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ctx := context.Background()
@@ -247,53 +303,116 @@ func TestClient_Go_DoubleStart(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSearchInProgress)
 }
 
-func TestClient_SetOption_InvalidOption(t *testing.T) {
+func TestClient_Apply_OptionNotFound(t *testing.T) {
 	eng := buildTestEngine(nil)
 
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
-	strVal := "4"
-	err := c.SetOption("NonExistentOption", &strVal)
+	err := c.Apply(WithThreads(4))
 
-	var optErr *ErrInvalidOption
-	require.ErrorAs(t, err, &optErr)
-	assert.Equal(t, "NonExistentOption", optErr.Name)
+	var notFound *ErrOptionNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, "Threads", notFound.Name)
 }
 
-func TestClient_SetOption_ValidOption(t *testing.T) {
+func TestClient_Apply_ValidSpinOption(t *testing.T) {
 	eng := buildTestEngine(nil)
 
 	c := &Client{
 		eng:    eng,
 		search: newSearchState(),
-		options: map[string]Option{
-			"Threads": {Name: "Threads", Type: OptionTypeSpin},
+		options: map[string]OptionInfo{
+			"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
 		},
 	}
 
-	strVal := "4"
-	err := c.SetOption("Threads", &strVal)
+	err := c.Apply(WithThreads(4))
 	assert.NoError(t, err)
 }
 
-func TestClient_SetOption_ButtonType(t *testing.T) {
+func TestClient_Apply_ButtonOption(t *testing.T) {
 	eng := buildTestEngine(nil)
 
 	c := &Client{
 		eng:    eng,
 		search: newSearchState(),
-		options: map[string]Option{
+		options: map[string]OptionInfo{
 			"Clear Hash": {Name: "Clear Hash", Type: OptionTypeButton},
 		},
 	}
 
-	// nil value = button
-	err := c.SetOption("Clear Hash", nil)
+	err := c.Apply(WithClearHash())
 	assert.NoError(t, err)
+}
+
+func TestClient_Apply_MultipleOptions(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+		options: map[string]OptionInfo{
+			"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+			"Ponder":  {Name: "Ponder", Type: OptionTypeCheck},
+		},
+	}
+
+	err := c.Apply(WithThreads(4), WithPonder(false))
+	assert.NoError(t, err)
+}
+
+func TestClient_Apply_StopsOnFirstError(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+		options: map[string]OptionInfo{
+			"Ponder": {Name: "Ponder", Type: OptionTypeCheck},
+		},
+	}
+
+	// "Threads" not in options, so first option fails; "Ponder" is never applied.
+	err := c.Apply(WithThreads(4), WithPonder(false))
+
+	var notFound *ErrOptionNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, "Threads", notFound.Name)
+}
+
+func TestClient_Apply_NilOptionReturnsError(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]OptionInfo),
+	}
+
+	err := c.Apply(nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "index 0")
+}
+
+func TestClient_Apply_NilOptionInSliceReturnsError(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+		options: map[string]OptionInfo{
+			"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+		},
+	}
+
+	// First option is valid; second is nil — should return error at index 1.
+	err := c.Apply(WithThreads(4), nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "index 1")
 }
 
 func TestClient_Close_Idempotent(t *testing.T) {
@@ -303,7 +422,7 @@ func TestClient_Close_Idempotent(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 		closed:  false,
 	}
 
@@ -386,7 +505,7 @@ func buildClosedClient() *Client {
 	return &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 		closed:  true,
 	}
 }
@@ -403,10 +522,9 @@ func TestClient_NewGame_AfterClose(t *testing.T) {
 	assert.ErrorIs(t, err, ErrEngineNotRunning)
 }
 
-func TestClient_SetOption_AfterClose(t *testing.T) {
+func TestClient_Apply_AfterClose(t *testing.T) {
 	c := buildClosedClient()
-	strVal := "4"
-	err := c.SetOption("Threads", &strVal)
+	err := c.Apply(WithThreads(4))
 	assert.ErrorIs(t, err, ErrEngineNotRunning)
 }
 
@@ -508,7 +626,7 @@ func TestClient_Go_SlowConsumer(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -559,7 +677,7 @@ func TestClient_Go_FullBuffer(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ch, err := c.Go(context.Background(), &SearchParams{Depth: 1})

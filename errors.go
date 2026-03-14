@@ -34,15 +34,67 @@ func (e *ErrUnexpectedResponse) Error() string {
 	return fmt.Sprintf("unexpected engine response: %q", e.Line)
 }
 
-// ErrInvalidOption is returned when an unknown or invalid option name is
-// provided to SetOption.
-type ErrInvalidOption struct {
+// ErrOptionNotFound is returned when an option name is not among the options
+// reported by the engine during initialisation.
+type ErrOptionNotFound struct {
 	Name string
 }
 
 // Error implements the error interface.
-func (e *ErrInvalidOption) Error() string {
-	return fmt.Sprintf("invalid option: %q", e.Name)
+func (e *ErrOptionNotFound) Error() string {
+	return fmt.Sprintf("option not found: %q", e.Name)
+}
+
+// ErrOptionTypeMismatch is returned when a typed option constructor is applied
+// to an option whose UCI type differs from the expected type.
+type ErrOptionTypeMismatch struct {
+	Name     string
+	Expected OptionType
+	Got      OptionType
+}
+
+// Error implements the error interface.
+func (e *ErrOptionTypeMismatch) Error() string {
+	return fmt.Sprintf("option %q type mismatch: expected %s, got %s", e.Name, e.Expected, e.Got)
+}
+
+// ErrOptionOutOfRange is returned when a spin option value falls outside the
+// [Min, Max] bounds reported by the engine.
+type ErrOptionOutOfRange struct {
+	Name  string
+	Value int
+	Min   int
+	Max   int
+}
+
+// Error implements the error interface.
+func (e *ErrOptionOutOfRange) Error() string {
+	return fmt.Sprintf("option %q value %d out of range [%d, %d]", e.Name, e.Value, e.Min, e.Max)
+}
+
+// ErrOptionInvalidValue is returned when a combo option value is not among the
+// allowed variants reported by the engine.
+type ErrOptionInvalidValue struct {
+	Name    string
+	Value   string
+	Allowed []string
+}
+
+// Error implements the error interface.
+func (e *ErrOptionInvalidValue) Error() string {
+	return fmt.Sprintf("option %q value %q not in allowed set %v", e.Name, e.Value, e.Allowed)
+}
+
+// ErrOptionInvalidCharacters is returned when an option value contains
+// characters that are not permitted, such as CR or LF in string options.
+type ErrOptionInvalidCharacters struct {
+	Name  string
+	Value string
+}
+
+// Error implements the error interface.
+func (e *ErrOptionInvalidCharacters) Error() string {
+	return fmt.Sprintf("option %q value contains invalid characters", e.Name)
 }
 
 // ErrInvalidPosition is returned when a malformed FEN string or invalid move
