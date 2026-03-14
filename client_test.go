@@ -66,6 +66,55 @@ func buildTestEngine(outputLines []string) *engine {
 	return eng
 }
 
+// capturingWriter is an io.WriteCloser that records everything written to it.
+type capturingWriter struct {
+	buf strings.Builder
+}
+
+func (w *capturingWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+func (w *capturingWriter) Close() error                { return nil }
+
+// sentLines returns the lines written to the engine's stdin, trimming the
+// trailing newline that writeLine appends to each command.
+func (w *capturingWriter) sentLines() []string {
+	raw := w.buf.String()
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+
+	return parts
+}
+
+// buildCapturingEngine creates an engine that captures everything sent to stdin.
+// It returns the engine and the writer so tests can inspect sent commands.
+func buildCapturingEngine(outputLines []string) (*engine, *capturingWriter) {
+	proc := newFakeProcess(outputLines)
+	cw := &capturingWriter{}
+
+	eng := &engine{
+		lineCh: make(chan string, 64),
+		errCh:  make(chan error, 1),
+		done:   make(chan struct{}),
+	}
+
+	go func() {
+		defer close(eng.lineCh)
+		defer close(eng.done)
+
+		for _, line := range proc.output {
+			if line != "" {
+				eng.lineCh <- line
+			}
+		}
+	}()
+
+	eng.proc = &process{stdin: cw, reader: proc.reader}
+
+	return eng, cw
+}
+
 func TestNew_InvalidPath(t *testing.T) {
 	_, err := New("/nonexistent/stockfish")
 	assert.Error(t, err)
@@ -326,6 +375,37 @@ func TestClient_Apply_StopsOnFirstError(t *testing.T) {
 	var notFound *ErrOptionNotFound
 	require.ErrorAs(t, err, &notFound)
 	assert.Equal(t, "Threads", notFound.Name)
+}
+
+func TestClient_Apply_NilOptionReturnsError(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:     eng,
+		search:  newSearchState(),
+		options: make(map[string]OptionInfo),
+	}
+
+	err := c.Apply(nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "index 0")
+}
+
+func TestClient_Apply_NilOptionInSliceReturnsError(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+		options: map[string]OptionInfo{
+			"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+		},
+	}
+
+	// First option is valid; second is nil — should return error at index 1.
+	err := c.Apply(WithThreads(4), nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "index 1")
 }
 
 func TestClient_Close_Idempotent(t *testing.T) {

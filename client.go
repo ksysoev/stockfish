@@ -193,7 +193,11 @@ func (c *Client) Apply(opts ...Option) error {
 		return ErrSearchInProgress
 	}
 
-	for _, opt := range opts {
+	for i, opt := range opts {
+		if opt == nil {
+			return fmt.Errorf("option at index %d is nil", i)
+		}
+
 		if err := opt(c); err != nil {
 			return err
 		}

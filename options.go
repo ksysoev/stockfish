@@ -98,6 +98,12 @@ func WithUCIAnalyseMode(v bool) Option {
 	return WithCheckOption("UCI_AnalyseMode", v)
 }
 
+// containsNewline reports whether s contains a CR or LF character, which would
+// allow injecting additional UCI commands into the engine's stdin stream.
+func containsNewline(s string) bool {
+	return strings.ContainsAny(s, "\r\n")
+}
+
 // WithSpinOption returns an Option that sets any spin-type UCI option by name.
 // It validates that:
 //   - the option exists on the engine,
@@ -121,7 +127,7 @@ func WithSpinOption(name string, value int) Option {
 		cmd := fmt.Sprintf("setoption name %s value %d", name, value)
 
 		if err := c.eng.send(cmd); err != nil {
-			return fmt.Errorf("send setoption: %w", err)
+			return fmt.Errorf("send setoption %q: %w", name, err)
 		}
 
 		return nil
@@ -144,7 +150,7 @@ func WithCheckOption(name string, value bool) Option {
 		cmd := fmt.Sprintf("setoption name %s value %t", name, value)
 
 		if err := c.eng.send(cmd); err != nil {
-			return fmt.Errorf("send setoption: %w", err)
+			return fmt.Errorf("send setoption %q: %w", name, err)
 		}
 
 		return nil
@@ -174,7 +180,7 @@ func WithComboOption(name, value string) Option {
 		cmd := fmt.Sprintf("setoption name %s value %s", name, value)
 
 		if err := c.eng.send(cmd); err != nil {
-			return fmt.Errorf("send setoption: %w", err)
+			return fmt.Errorf("send setoption %q: %w", name, err)
 		}
 
 		return nil
@@ -183,8 +189,15 @@ func WithComboOption(name, value string) Option {
 
 // WithStringOption returns an Option that sets any string-type UCI option by
 // name. It validates that the option exists and is of type string.
+//
+// The value must not contain CR or LF characters, as these would allow
+// injecting additional UCI commands into the engine's stdin stream.
 func WithStringOption(name, value string) Option {
 	return func(c *Client) error {
+		if containsNewline(value) {
+			return fmt.Errorf("option %q value contains invalid characters (CR/LF)", name)
+		}
+
 		info, ok := c.options[name]
 		if !ok {
 			return &ErrOptionNotFound{Name: name}
@@ -197,7 +210,7 @@ func WithStringOption(name, value string) Option {
 		cmd := fmt.Sprintf("setoption name %s value %s", name, value)
 
 		if err := c.eng.send(cmd); err != nil {
-			return fmt.Errorf("send setoption: %w", err)
+			return fmt.Errorf("send setoption %q: %w", name, err)
 		}
 
 		return nil
@@ -220,7 +233,7 @@ func WithButtonOption(name string) Option {
 		cmd := fmt.Sprintf("setoption name %s", name)
 
 		if err := c.eng.send(cmd); err != nil {
-			return fmt.Errorf("send setoption: %w", err)
+			return fmt.Errorf("send setoption %q: %w", name, err)
 		}
 
 		return nil
