@@ -88,8 +88,9 @@ func main() {
 
 ### Configuring options
 
-Change engine options before starting a search. Spin options take a string
-value; button options (like `Clear Hash`) take no value (`nil`).
+Pass one or more typed option constructors to `Apply`. Each constructor
+validates the value against the engine's reported metadata (type, min/max
+bounds, allowed combo values) before sending the command.
 
 ```go
 package main
@@ -107,17 +108,40 @@ func main() {
 	}
 	defer client.Close()
 
-	// Set thread count (spin option).
-	threads := "4"
-	if err = client.SetOption("Threads", &threads); err != nil {
-		log.Fatal(err)
-	}
-
-	// Trigger a button option (no value needed).
-	if err = client.SetOption("Clear Hash", nil); err != nil {
+	if err = client.Apply(
+		stockfish.WithThreads(4),
+		stockfish.WithHash(256),
+		stockfish.WithClearHash(),
+	); err != nil {
 		log.Fatal(err)
 	}
 }
+```
+
+Available named constructors:
+
+| Constructor | UCI type | Option name |
+|---|---|---|
+| `WithThreads(n int)` | spin | `Threads` |
+| `WithHash(mb int)` | spin | `Hash` |
+| `WithPonder(v bool)` | check | `Ponder` |
+| `WithMultiPV(n int)` | spin | `MultiPV` |
+| `WithSkillLevel(n int)` | spin | `Skill Level` |
+| `WithMoveOverhead(ms int)` | spin | `Move Overhead` |
+| `WithClearHash()` | button | `Clear Hash` |
+| `WithUCIChess960(v bool)` | check | `UCI_Chess960` |
+| `WithSyzygyPath(path string)` | string | `SyzygyPath` |
+| `WithUCIAnalyseMode(v bool)` | check | `UCI_AnalyseMode` |
+
+For any other engine option use the generic constructors directly:
+
+```go
+client.Apply(
+    stockfish.WithSpinOption("Minimum Thinking Time", 20),
+    stockfish.WithComboOption("NumaPolicy", "auto"),
+    stockfish.WithStringOption("Debug Log File", "/tmp/sf.log"),
+    stockfish.WithButtonOption("Clear Hash"),
+)
 ```
 
 ### Starting a new game
