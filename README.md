@@ -1,6 +1,7 @@
 # Stockfish Go
 
 [![Tests](https://github.com/ksysoev/stockfish/actions/workflows/tests.yml/badge.svg)](https://github.com/ksysoev/stockfish/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/ksysoev/stockfish/graph/badge.svg?token=CK8U257RQE)](https://codecov.io/gh/ksysoev/stockfish)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ksysoev/stockfish)](https://goreportcard.com/report/github.com/ksysoev/stockfish)
 [![Go Reference](https://pkg.go.dev/badge/github.com/ksysoev/stockfish.svg)](https://pkg.go.dev/github.com/ksysoev/stockfish)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
