@@ -12,9 +12,24 @@ func TestErrUnexpectedResponse(t *testing.T) {
 	assert.EqualError(t, err, `unexpected engine response: "foobar"`)
 }
 
-func TestErrInvalidOption(t *testing.T) {
-	err := &ErrInvalidOption{Name: "BadOption"}
-	assert.EqualError(t, err, `invalid option: "BadOption"`)
+func TestErrOptionNotFound(t *testing.T) {
+	err := &ErrOptionNotFound{Name: "BadOption"}
+	assert.EqualError(t, err, `option not found: "BadOption"`)
+}
+
+func TestErrOptionTypeMismatch(t *testing.T) {
+	err := &ErrOptionTypeMismatch{Name: "Threads", Expected: OptionTypeSpin, Got: OptionTypeCheck}
+	assert.EqualError(t, err, `option "Threads" type mismatch: expected spin, got check`)
+}
+
+func TestErrOptionOutOfRange(t *testing.T) {
+	err := &ErrOptionOutOfRange{Name: "Threads", Value: 9999, Min: 1, Max: 1024}
+	assert.EqualError(t, err, `option "Threads" value 9999 out of range [1, 1024]`)
+}
+
+func TestErrOptionInvalidValue(t *testing.T) {
+	err := &ErrOptionInvalidValue{Name: "NumaPolicy", Value: "bogus", Allowed: []string{"auto", "none"}}
+	assert.EqualError(t, err, `option "NumaPolicy" value "bogus" not in allowed set [auto none]`)
 }
 
 func TestErrInvalidPosition(t *testing.T) {

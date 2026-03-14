@@ -87,7 +87,7 @@ func TestClient_OptionsAndMeta(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	err := c.initialize()
@@ -112,7 +112,7 @@ func TestClient_SetPosition_Error(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	err := c.SetPosition(Position{})
@@ -125,7 +125,7 @@ func TestClient_SetPosition_BothStartPosAndFEN(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	err := c.SetPosition(Position{StartPos: true, FEN: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"})
@@ -171,7 +171,7 @@ func TestClient_Go_StreamsResults(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ctx := context.Background()
@@ -209,7 +209,7 @@ func TestClient_Go_NilParams(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ctx := context.Background()
@@ -233,7 +233,7 @@ func TestClient_Go_DoubleStart(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ctx := context.Background()
@@ -247,53 +247,85 @@ func TestClient_Go_DoubleStart(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSearchInProgress)
 }
 
-func TestClient_SetOption_InvalidOption(t *testing.T) {
+func TestClient_Apply_OptionNotFound(t *testing.T) {
 	eng := buildTestEngine(nil)
 
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
-	strVal := "4"
-	err := c.SetOption("NonExistentOption", &strVal)
+	err := c.Apply(WithThreads(4))
 
-	var optErr *ErrInvalidOption
-	require.ErrorAs(t, err, &optErr)
-	assert.Equal(t, "NonExistentOption", optErr.Name)
+	var notFound *ErrOptionNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, "Threads", notFound.Name)
 }
 
-func TestClient_SetOption_ValidOption(t *testing.T) {
+func TestClient_Apply_ValidSpinOption(t *testing.T) {
 	eng := buildTestEngine(nil)
 
 	c := &Client{
 		eng:    eng,
 		search: newSearchState(),
-		options: map[string]Option{
-			"Threads": {Name: "Threads", Type: OptionTypeSpin},
+		options: map[string]OptionInfo{
+			"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
 		},
 	}
 
-	strVal := "4"
-	err := c.SetOption("Threads", &strVal)
+	err := c.Apply(WithThreads(4))
 	assert.NoError(t, err)
 }
 
-func TestClient_SetOption_ButtonType(t *testing.T) {
+func TestClient_Apply_ButtonOption(t *testing.T) {
 	eng := buildTestEngine(nil)
 
 	c := &Client{
 		eng:    eng,
 		search: newSearchState(),
-		options: map[string]Option{
+		options: map[string]OptionInfo{
 			"Clear Hash": {Name: "Clear Hash", Type: OptionTypeButton},
 		},
 	}
 
-	// nil value = button
-	err := c.SetOption("Clear Hash", nil)
+	err := c.Apply(WithClearHash())
 	assert.NoError(t, err)
+}
+
+func TestClient_Apply_MultipleOptions(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+		options: map[string]OptionInfo{
+			"Threads": {Name: "Threads", Type: OptionTypeSpin, Min: 1, Max: 1024},
+			"Ponder":  {Name: "Ponder", Type: OptionTypeCheck},
+		},
+	}
+
+	err := c.Apply(WithThreads(4), WithPonder(false))
+	assert.NoError(t, err)
+}
+
+func TestClient_Apply_StopsOnFirstError(t *testing.T) {
+	eng := buildTestEngine(nil)
+
+	c := &Client{
+		eng:    eng,
+		search: newSearchState(),
+		options: map[string]OptionInfo{
+			"Ponder": {Name: "Ponder", Type: OptionTypeCheck},
+		},
+	}
+
+	// "Threads" not in options, so first option fails; "Ponder" is never applied.
+	err := c.Apply(WithThreads(4), WithPonder(false))
+
+	var notFound *ErrOptionNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, "Threads", notFound.Name)
 }
 
 func TestClient_Close_Idempotent(t *testing.T) {
@@ -303,7 +335,7 @@ func TestClient_Close_Idempotent(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 		closed:  false,
 	}
 
@@ -386,7 +418,7 @@ func buildClosedClient() *Client {
 	return &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 		closed:  true,
 	}
 }
@@ -403,10 +435,9 @@ func TestClient_NewGame_AfterClose(t *testing.T) {
 	assert.ErrorIs(t, err, ErrEngineNotRunning)
 }
 
-func TestClient_SetOption_AfterClose(t *testing.T) {
+func TestClient_Apply_AfterClose(t *testing.T) {
 	c := buildClosedClient()
-	strVal := "4"
-	err := c.SetOption("Threads", &strVal)
+	err := c.Apply(WithThreads(4))
 	assert.ErrorIs(t, err, ErrEngineNotRunning)
 }
 
@@ -508,7 +539,7 @@ func TestClient_Go_SlowConsumer(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -559,7 +590,7 @@ func TestClient_Go_FullBuffer(t *testing.T) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	ch, err := c.Go(context.Background(), &SearchParams{Depth: 1})

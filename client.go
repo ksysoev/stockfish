@@ -22,7 +22,7 @@ const (
 type Client struct {
 	eng     *engine
 	search  *searchState
-	options map[string]Option
+	options map[string]OptionInfo
 	name    string
 	author  string
 	mu      sync.Mutex
@@ -43,7 +43,7 @@ func New(path string) (*Client, error) {
 	c := &Client{
 		eng:     eng,
 		search:  newSearchState(),
-		options: make(map[string]Option),
+		options: make(map[string]OptionInfo),
 	}
 
 	if err = c.initialize(); err != nil {
@@ -99,11 +99,11 @@ func (c *Client) Author() string {
 
 // Options returns a copy of the UCI options map discovered during
 // initialisation. Keys are option names.
-func (c *Client) Options() map[string]Option {
+func (c *Client) Options() map[string]OptionInfo {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	out := make(map[string]Option, len(c.options))
+	out := make(map[string]OptionInfo, len(c.options))
 
 	for k, v := range c.options {
 		out[k] = v
@@ -169,15 +169,19 @@ func (c *Client) NewGame() error {
 	return c.isReady()
 }
 
-// SetOption sends a "setoption" command to the engine. For button-type options
-// pass nil as value. For string-type options that should be set to the empty
-// string, pass a pointer to an empty string.
+// Apply applies one or more Options to the engine. Each Option validates and
+// sends the corresponding "setoption" UCI command. Options are applied in the
+// order they are provided; the first error aborts the remaining options.
 //
 // Returns ErrEngineNotRunning if the client has been closed.
 // Returns ErrSearchInProgress if a search is active.
-// Returns ErrInvalidOption if name is not among the options reported by the
-// engine during initialisation.
-func (c *Client) SetOption(name string, value *string) error {
+// Returns ErrOptionNotFound if an option name is not among those reported by
+// the engine during initialisation.
+// Returns ErrOptionTypeMismatch if the value type does not match the option's
+// UCI type.
+// Returns ErrOptionOutOfRange if a spin value falls outside [Min, Max].
+// Returns ErrOptionInvalidValue if a combo value is not in the allowed set.
+func (c *Client) Apply(opts ...Option) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -189,14 +193,10 @@ func (c *Client) SetOption(name string, value *string) error {
 		return ErrSearchInProgress
 	}
 
-	if _, ok := c.options[name]; !ok {
-		return &ErrInvalidOption{Name: name}
-	}
-
-	cmd := buildSetOption(name, value)
-
-	if err := c.eng.send(cmd); err != nil {
-		return fmt.Errorf("send setoption: %w", err)
+	for _, opt := range opts {
+		if err := opt(c); err != nil {
+			return err
+		}
 	}
 
 	return nil

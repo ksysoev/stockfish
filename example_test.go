@@ -58,23 +58,20 @@ func ExampleClient_Go() {
 	}
 }
 
-// ExampleClient_SetOption demonstrates configuring engine options before
-// starting a search. Spin options (like Threads) require a string value;
-// button options (like Clear Hash) require nil.
-func ExampleClient_SetOption() {
+// ExampleClient_Apply demonstrates configuring engine options before starting
+// a search using the typed option constructors.
+func ExampleClient_Apply() {
 	client, err := stockfish.New("/usr/local/bin/stockfish")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Set thread count (spin option).
-	threads := "4"
-	if err = client.SetOption("Threads", &threads); err != nil {
-		log.Fatal(err)
-	}
-
-	// Trigger a button option — no value needed.
-	if err = client.SetOption("Clear Hash", nil); err != nil {
+	// Set thread count and hash table size, then clear the hash table.
+	if err = client.Apply(
+		stockfish.WithThreads(4),
+		stockfish.WithHash(256),
+		stockfish.WithClearHash(),
+	); err != nil {
 		log.Fatal(err)
 	}
 
