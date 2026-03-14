@@ -120,6 +120,13 @@ func TestNew_InvalidPath(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestNew_WithOptions_NilOption(t *testing.T) {
+	_, err := New("/nonexistent/stockfish", nil)
+	// The process launch fails first, so we still get an error — the important
+	// thing is that passing nil doesn't panic.
+	assert.Error(t, err)
+}
+
 func TestClient_OptionsAndMeta(t *testing.T) {
 	uciOutput := []string{
 		"id name Stockfish 16",

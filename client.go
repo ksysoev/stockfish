@@ -32,7 +32,11 @@ type Client struct {
 // New launches the Stockfish binary at path, performs the UCI handshake, and
 // returns a ready-to-use Client. The caller must call Close to release
 // resources.
-func New(path string) (*Client, error) {
+//
+// Optional opts are applied immediately after the handshake completes, before
+// the Client is returned. If any option fails the engine is shut down and the
+// error is returned.
+func New(path string, opts ...Option) (*Client, error) {
 	proc, err := newProcess(path)
 	if err != nil {
 		return nil, fmt.Errorf("launch engine: %w", err)
@@ -49,6 +53,18 @@ func New(path string) (*Client, error) {
 	if err = c.initialize(); err != nil {
 		_ = proc.close()
 		return nil, fmt.Errorf("initialize UCI: %w", err)
+	}
+
+	for i, opt := range opts {
+		if opt == nil {
+			_ = proc.close()
+			return nil, fmt.Errorf("option at index %d is nil", i)
+		}
+
+		if err = opt(c); err != nil {
+			_ = proc.close()
+			return nil, fmt.Errorf("apply option: %w", err)
+		}
 	}
 
 	return c, nil

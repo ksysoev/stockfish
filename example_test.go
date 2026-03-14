@@ -25,6 +25,25 @@ func ExampleNew() {
 	}
 }
 
+// ExampleNew_withOptions demonstrates launching the engine and applying typed
+// options in a single call so the client is fully configured before use.
+func ExampleNew_withOptions() {
+	client, err := stockfish.New(
+		"/usr/local/bin/stockfish",
+		stockfish.WithThreads(4),
+		stockfish.WithHash(256),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Engine:", client.Name())
+
+	if err = client.Close(); err != nil {
+		log.Fatal(err)
+	}
+}
+
 // ExampleClient_Go demonstrates setting the starting position, running a
 // depth-limited search, and printing the principal variation at each depth
 // together with the final best move.
