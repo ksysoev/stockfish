@@ -279,8 +279,11 @@ func TestWithStringOption_NewlineRejected(t *testing.T) {
 			})
 
 			err := WithStringOption("SyzygyPath", tc.value)(c)
-			assert.Error(t, err)
-			assert.ErrorContains(t, err, "invalid characters")
+
+			var invalidChars *ErrOptionInvalidCharacters
+			require.ErrorAs(t, err, &invalidChars)
+			assert.Equal(t, "SyzygyPath", invalidChars.Name)
+			assert.Equal(t, tc.value, invalidChars.Value)
 		})
 	}
 }

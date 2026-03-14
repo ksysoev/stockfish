@@ -174,7 +174,7 @@ func WithComboOption(name, value string) Option {
 		}
 
 		if !slices.Contains(info.Vars, value) {
-			return &ErrOptionInvalidValue{Name: name, Value: value, Allowed: info.Vars}
+			return &ErrOptionInvalidValue{Name: name, Value: value, Allowed: slices.Clone(info.Vars)}
 		}
 
 		cmd := fmt.Sprintf("setoption name %s value %s", name, value)
@@ -195,7 +195,7 @@ func WithComboOption(name, value string) Option {
 func WithStringOption(name, value string) Option {
 	return func(c *Client) error {
 		if containsNewline(value) {
-			return fmt.Errorf("option %q value contains invalid characters (CR/LF)", name)
+			return &ErrOptionInvalidCharacters{Name: name, Value: value}
 		}
 
 		info, ok := c.options[name]

@@ -63,7 +63,7 @@ func New(path string, opts ...Option) (*Client, error) {
 
 		if err = opt(c); err != nil {
 			_ = proc.close()
-			return nil, fmt.Errorf("apply option: %w", err)
+			return nil, fmt.Errorf("apply option at index %d: %w", i, err)
 		}
 	}
 
@@ -215,7 +215,7 @@ func (c *Client) Apply(opts ...Option) error {
 		}
 
 		if err := opt(c); err != nil {
-			return err
+			return fmt.Errorf("option at index %d: %w", i, err)
 		}
 	}
 

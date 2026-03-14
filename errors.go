@@ -85,6 +85,18 @@ func (e *ErrOptionInvalidValue) Error() string {
 	return fmt.Sprintf("option %q value %q not in allowed set %v", e.Name, e.Value, e.Allowed)
 }
 
+// ErrOptionInvalidCharacters is returned when an option value contains
+// characters that are not permitted, such as CR or LF in string options.
+type ErrOptionInvalidCharacters struct {
+	Name  string
+	Value string
+}
+
+// Error implements the error interface.
+func (e *ErrOptionInvalidCharacters) Error() string {
+	return fmt.Sprintf("option %q value contains invalid characters", e.Name)
+}
+
 // ErrInvalidPosition is returned when a malformed FEN string or invalid move
 // is provided to SetPosition.
 type ErrInvalidPosition struct {

@@ -32,6 +32,11 @@ func TestErrOptionInvalidValue(t *testing.T) {
 	assert.EqualError(t, err, `option "NumaPolicy" value "bogus" not in allowed set [auto none]`)
 }
 
+func TestErrOptionInvalidCharacters(t *testing.T) {
+	err := &ErrOptionInvalidCharacters{Name: "SyzygyPath", Value: "/tb\n/evil"}
+	assert.EqualError(t, err, `option "SyzygyPath" value contains invalid characters`)
+}
+
 func TestErrInvalidPosition(t *testing.T) {
 	err := &ErrInvalidPosition{Detail: "missing FEN"}
 	assert.EqualError(t, err, "invalid position: missing FEN")
