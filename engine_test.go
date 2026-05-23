@@ -13,21 +13,21 @@ func TestEngineReadUntil(t *testing.T) {
 	lines := []string{
 		"id name Stockfish 16",
 		"option name Threads type spin default 1 min 1 max 1024",
-		"uciok",
+		uciOK,
 		"extra line should not be read",
 	}
 
 	eng := buildTestEngine(lines)
 
 	collected, err := eng.readUntil(context.Background(), func(line string) bool {
-		return line == "uciok"
+		return line == uciOK
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"id name Stockfish 16",
 		"option name Threads type spin default 1 min 1 max 1024",
-		"uciok",
+		uciOK,
 	}, collected)
 }
 

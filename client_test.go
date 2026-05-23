@@ -134,7 +134,7 @@ func TestClient_OptionsAndMeta(t *testing.T) {
 		"option name Threads type spin default 1 min 1 max 1024",
 		"option name Hash type spin default 16 min 1 max 33554432",
 		"option name Ponder type check default false",
-		"uciok",
+		uciOK,
 		"readyok",
 	}
 

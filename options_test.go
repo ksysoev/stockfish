@@ -90,7 +90,7 @@ func TestParseOption_Invalid(t *testing.T) {
 
 func TestCollectUntilKeyword(t *testing.T) {
 	tokens := []string{"nn-abc.nnue", "min", "1"}
-	result := collectUntilKeyword(tokens, []string{"min", "max"})
+	result := collectUntilKeyword(tokens, []string{optionKeyMin, optionKeyMax})
 	assert.Equal(t, []string{"nn-abc.nnue"}, result)
 }
 

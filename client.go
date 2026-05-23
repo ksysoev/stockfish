@@ -10,6 +10,7 @@ import (
 
 const (
 	readyOK          = "readyok"
+	uciOK            = "uciok"
 	defaultHandshake = 30 * time.Second
 )
 
@@ -80,7 +81,7 @@ func (c *Client) initialize() error {
 	defer cancel()
 
 	lines, err := c.eng.readUntil(ctx, func(line string) bool {
-		return line == "uciok"
+		return line == uciOK
 	})
 	if err != nil {
 		return fmt.Errorf("waiting for uciok: %w", err)
