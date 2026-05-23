@@ -21,6 +21,10 @@ const (
 	OptionTypeButton OptionType = "button"
 	// OptionTypeCombo represents an option with a fixed set of allowed values.
 	OptionTypeCombo OptionType = "combo"
+
+	optionKeyMin = "min"
+	optionKeyMax = "max"
+	optionKeyVar = "var"
 )
 
 // OptionInfo describes a single UCI engine option as reported during
@@ -278,11 +282,11 @@ func parseOption(line string) (OptionInfo, error) {
 		case "default":
 			// Default value may be multi-word (e.g. empty string is just
 			// "default" with nothing after).
-			defaultParts := collectUntilKeyword(fields[i+1:], []string{"min", "max", "var"})
+			defaultParts := collectUntilKeyword(fields[i+1:], []string{optionKeyMin, optionKeyMax, optionKeyVar})
 			opt.Default = strings.Join(defaultParts, " ")
 			i += len(defaultParts)
 
-		case "min":
+		case optionKeyMin:
 			if i+1 < len(fields) {
 				v, err := strconv.Atoi(fields[i+1])
 				if err != nil {
@@ -293,7 +297,7 @@ func parseOption(line string) (OptionInfo, error) {
 				i++
 			}
 
-		case "max":
+		case optionKeyMax:
 			if i+1 < len(fields) {
 				v, err := strconv.Atoi(fields[i+1])
 				if err != nil {
@@ -304,8 +308,8 @@ func parseOption(line string) (OptionInfo, error) {
 				i++
 			}
 
-		case "var":
-			varParts := collectUntilKeyword(fields[i+1:], []string{"var"})
+		case optionKeyVar:
+			varParts := collectUntilKeyword(fields[i+1:], []string{optionKeyVar})
 			opt.Vars = append(opt.Vars, strings.Join(varParts, " "))
 			i += len(varParts)
 		}
